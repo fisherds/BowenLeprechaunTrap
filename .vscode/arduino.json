@@ -1,0 +1,5 @@
+{
+    "board": "arduino:avr:uno",
+    "port": "/dev/tty.usbserial-DN0421L4",
+    "sketch": "leprechaun_trap/leprechaun_trap.ino"
+}

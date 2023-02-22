@@ -38,7 +38,7 @@ uint8_t newMotorState = MOTOR_OFF;
 // Button overrides - manual open and close overrides
 #define BTN_OVERRIDE_NONE 0
 #define BTN_OVERRIDE_CLOSE 1
-#define BTN_OVERRIDE_OPEN 1
+#define BTN_OVERRIDE_OPEN 2
 uint8_t override = BTN_OVERRIDE_NONE;
 
 // Auto door commands
@@ -60,13 +60,14 @@ int read_LCD_buttons() {
 }
 
 void setup() {
+    Serial.begin(9600);
   lcd.begin(16, 2);
   lcd.setCursor(0, 0);
   lcd.print("Bowen's Trap is off");
 
   // pinMode(0, OUTPUT);
   // pinMode(1, OUTPUT);
-  pinMode(PIN_RESET_DOOR, INPUT_PULLUP);  // 11
+  pinMode(PIN_RESET_DOOR, INPUT_PULLUP);  // 11 - this is probably not needed
   pinMode(PIN_MOTOR_OPEN, OUTPUT);        // 12 or 13
   pinMode(PIN_MOTOR_CLOSE, OUTPUT);       // 12 or 13
 
@@ -134,12 +135,50 @@ void loop() {
   } else if (override == BTN_OVERRIDE_OPEN) {
     newMotorState = MOTOR_OPENING;
   } else {
-    if (autoState == AUTO_ENABLED_ARMED) {
-      if (inches < DIST_THRESHOLD) {
-        autoState = AUTO_CLOSING;
-      }
-    }
+    // if (autoState == AUTO_ENABLED_ARMED) {
+    //   if (inches < DIST_THRESHOLD) {
+    //     autoState = AUTO_CLOSING;
+    //   }
+    // }
+
+    newMotorState = MOTOR_OFF;  // this is a hack for testing!!!!
   }
+
+  if (oldMotorState != newMotorState) {
+    if (newMotorState == MOTOR_CLOSING) {
+        
+      setMotorToClose();
+    } else if (newMotorState == MOTOR_OPENING) {
+      setMotorToOpen();
+    } else if (newMotorState == MOTOR_OFF) {
+      setMotorOff();
+    }
+
+    oldMotorState = newMotorState;
+  }
+}
+
+void setMotorToClose() {
+    Serial.println("Close");
+  digitalWrite(PIN_MOTOR_CLOSE, HIGH);
+  digitalWrite(PIN_MOTOR_OPEN, HIGH);
+  delay(500);
+  digitalWrite(PIN_MOTOR_CLOSE, LOW);
+  digitalWrite(PIN_MOTOR_OPEN, HIGH);
+}
+
+
+void setMotorToOpen() {
+    Serial.println("Open");
+  digitalWrite(PIN_MOTOR_CLOSE, HIGH);
+  digitalWrite(PIN_MOTOR_OPEN, HIGH);
+  delay(500);
+  digitalWrite(PIN_MOTOR_CLOSE, HIGH);
+  digitalWrite(PIN_MOTOR_OPEN, LOW);
+}
+void setMotorOff() {
+  digitalWrite(PIN_MOTOR_CLOSE, HIGH);
+  digitalWrite(PIN_MOTOR_OPEN, HIGH);
 }
 
 long microsecondsToInches(long microseconds) {

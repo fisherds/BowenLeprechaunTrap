@@ -5,7 +5,7 @@ LiquidCrystal lcd(8, 9, 4, 5, 6, 7);  // 10 is the backlight
 const int pingPin = 3;  // Trigger Pin of Ultrasonic Sensor
 const int echoPin = 2;  // Echo Pin of Ultrasonic Sensor
 long duration, inches;
-#define DIST_THRESHOLD 6  // inches away threshold
+#define DIST_THRESHOLD 5  // inches away threshold (less than this is a Leprechaun)
 
 // define some values used by the panel and buttons
 int lcd_key = 0;
@@ -22,30 +22,32 @@ int adc_key_in = 0;
 #define PIN_MOTOR_CLOSE 13
 
 // Reset button
-#define PIN_RESET_DOOR 11
+#define PIN_DOOR_SENSOR 11
 
 // Distance trackers
-#define DISTANCE_MAX 800
-int16_t distance = DISTANCE_MAX;  // Door fully open (hopefully)
+#define DISTANCE_MAX 80           // This is the limit when the door hits the box.
+int16_t distance = DISTANCE_MAX;  // Default assumption that the door is in the worst spot.
 
-// What is the motor doing? (we need to know transitions)
+// What is the motor doing? (we need to know transitions to avoid shoot through current)
 #define MOTOR_OFF 0
 #define MOTOR_CLOSING 1
 #define MOTOR_OPENING 2
 uint8_t oldMotorState = MOTOR_OFF;
 uint8_t newMotorState = MOTOR_OFF;
 
-// Button overrides - manual open and close overrides
+// Button overrides - manual open, close, and stop overrides
+// These all disable the auto mode.
 #define BTN_OVERRIDE_NONE 0
 #define BTN_OVERRIDE_CLOSE 1
 #define BTN_OVERRIDE_OPEN 2
+#define BTN_OVERRIDE_STOP 3
 uint8_t override = BTN_OVERRIDE_NONE;
 
 // Auto door commands
-#define AUTO_DISABLED 0
-#define AUTO_ENABLED_ARMED 1
-#define AUTO_CLOSING 2
-#define AUTO_OPENING 3
+#define AUTO_DISABLED 0       // Disabled at the moment, probably due to an override
+#define AUTO_ENABLED_ARMED 1  // Not moving, just waiting for a leprechaun
+#define AUTO_CLOSING 2        // Get that Leprechaun!
+#define AUTO_OPENING 3        // Looking for the switch
 uint8_t autoState = AUTO_DISABLED;
 
 int read_LCD_buttons() {
@@ -60,64 +62,122 @@ int read_LCD_buttons() {
 }
 
 void setup() {
-    Serial.begin(9600);
+  Serial.begin(9600);
   lcd.begin(16, 2);
   lcd.setCursor(0, 0);
-  lcd.print("Bowen's Trap is off");
+  lcd.print("Bowen's Trap");
 
   // pinMode(0, OUTPUT);
   // pinMode(1, OUTPUT);
-  pinMode(PIN_RESET_DOOR, INPUT_PULLUP);  // 11 - this is probably not needed
-  pinMode(PIN_MOTOR_OPEN, OUTPUT);        // 12 or 13
-  pinMode(PIN_MOTOR_CLOSE, OUTPUT);       // 12 or 13
+  pinMode(PIN_DOOR_SENSOR, INPUT_PULLUP);  // 11 - door is fully open
+  pinMode(PIN_MOTOR_OPEN, OUTPUT);         // 12
+  pinMode(PIN_MOTOR_CLOSE, OUTPUT);        // 13
 
-  pinMode(pingPin, OUTPUT);  // 2 or 3
-  pinMode(echoPin, INPUT);   // 2 or 3
+  pinMode(pingPin, OUTPUT);  // 3
+  pinMode(echoPin, INPUT);   // 2
+  setMotorOff();
 }
 
 void loop() {
-  lcd.setCursor(0, 1);
+  checkForButtonOverrides();
+  getUltrasonicDistance();
+  delay(100);
+
+  // Use the FSM to decide what to do with the motor.
+  if (override == BTN_OVERRIDE_CLOSE) {
+    newMotorState = MOTOR_CLOSING;
+  } else if (override == BTN_OVERRIDE_OPEN) {
+    newMotorState = MOTOR_OPENING;
+  } else if (override == BTN_OVERRIDE_STOP) {
+    newMotorState = MOTOR_OFF;
+  } else {
+    // No overrides are present.  Now do the normal stuff.
+    if (autoState == AUTO_DISABLED) {
+      newMotorState = MOTOR_OFF;  // Do nothing right now.  Probably the door is shut.
+    } else if (autoState == AUTO_ENABLED_ARMED) {
+      if (inches < DIST_THRESHOLD) { // Look for Leprechauns!
+        autoState = AUTO_CLOSING;
+        newMotorState = MOTOR_CLOSING;
+      }
+    } else if (autoState == AUTO_CLOSING) {
+      if (distance >= DISTANCE_MAX) { // Go until the set distance.
+        autoState = AUTO_DISABLED; // Caught him!
+        newMotorState = MOTOR_OFF;
+        // TODO: Play a song or something.
+      }
+    } else if (autoState == AUTO_OPENING) {
+      if (digitalRead(PIN_DOOR_SENSOR) == LOW) { // Go until the switch is hit.
+        smallMoveForward();
+        distance = 0;
+        newMotorState = MOTOR_OFF;
+        autoState = AUTO_ENABLED_ARMED;
+      }
+    }
+  }
+
+  // Update the motors
+  if (oldMotorState != newMotorState) {
+    if (newMotorState == MOTOR_CLOSING) {
+      setMotorToClose();
+    } else if (newMotorState == MOTOR_OPENING) {
+      setMotorToOpen();
+    } else if (newMotorState == MOTOR_OFF) {
+      setMotorOff();
+    }
+    oldMotorState = newMotorState;
+  } else {
+    // They are the same.  The door is maybe moving.
+    if (newMotorState == MOTOR_CLOSING) {
+        distance += 1;
+    } else if (newMotorState == MOTOR_OPENING) {
+        distance -= 1;
+    }
+  }
+}
+
+void checkForButtonOverrides() {
+  lcd.setCursor(0, 1);  // Write on line 2 (called 1 since 0 based)
   lcd_key = read_LCD_buttons();
   switch (lcd_key) {
     case btnRIGHT:
-      lcd.print("BTN OPEN ");
+      lcd.print("OPEN ");
       override = BTN_OVERRIDE_OPEN;
       autoState = AUTO_DISABLED;
       lcd.setCursor(0, 0);
-      lcd.print("Bowen's Trap off");
+      lcd.print("Bowen's Trap Off");
       break;
     case btnLEFT:
-      lcd.print("BTN CLOSE");
+      lcd.print("CLOSE");
       override = BTN_OVERRIDE_CLOSE;
       autoState = AUTO_DISABLED;
       lcd.setCursor(0, 0);
-      lcd.print("Bowen's Trap off");
+      lcd.print("Bowen's Trap Off");
       break;
     case btnUP:
-      lcd.print("DISABLE  ");
+      lcd.print("STOP ");
+      override = BTN_OVERRIDE_STOP;
       autoState = AUTO_DISABLED;
       lcd.setCursor(0, 0);
-      lcd.print("Bowen's Trap off");
+      lcd.print("Bowen's Trap Off");
       break;
     case btnDOWN:
-      lcd.print("ARMED   ");
-      distance = DISTANCE_MAX;
-      autoState = AUTO_ENABLED_ARMED;
-      lcd.setCursor(0, 0);
-      lcd.print("Bowen's Trap ON");
-      break;
-    case btnSELECT:
-      lcd.print("RESET");
+      lcd.print("ARMED");
+      override = BTN_OVERRIDE_NONE;
       autoState = AUTO_OPENING;
       lcd.setCursor(0, 0);
-      lcd.print("Reseting door");
+      lcd.print("Bowen's Trap On ");
+      break;
+    case btnSELECT:
+      lcd.print("Unused");
       break;
     case btnNONE:
-      lcd.print("NONE  ");
+      lcd.print("      ");
       override = BTN_OVERRIDE_NONE;
       break;
   }
-  delay(100);
+}
+
+void getUltrasonicDistance() {
   // Ultrasonic ping
   digitalWrite(pingPin, LOW);
   delayMicroseconds(2);
@@ -127,55 +187,33 @@ void loop() {
   // Get the distance
   duration = pulseIn(echoPin, HIGH);
   inches = microsecondsToInches(duration);
+  lcd.setCursor(8, 1);
   lcd.print(inches);
-  lcd.print("in, ");
+  lcd.print("in");
+}
 
-  if (override == BTN_OVERRIDE_CLOSE) {
-    newMotorState = MOTOR_CLOSING;
-  } else if (override == BTN_OVERRIDE_OPEN) {
-    newMotorState = MOTOR_OPENING;
-  } else {
-    // if (autoState == AUTO_ENABLED_ARMED) {
-    //   if (inches < DIST_THRESHOLD) {
-    //     autoState = AUTO_CLOSING;
-    //   }
-    // }
-
-    newMotorState = MOTOR_OFF;  // this is a hack for testing!!!!
-  }
-
-  if (oldMotorState != newMotorState) {
-    if (newMotorState == MOTOR_CLOSING) {
-        
-      setMotorToClose();
-    } else if (newMotorState == MOTOR_OPENING) {
-      setMotorToOpen();
-    } else if (newMotorState == MOTOR_OFF) {
-      setMotorOff();
-    }
-
-    oldMotorState = newMotorState;
-  }
+void smallMoveForward() {
+    setMotorToClose();
+    delay(400);
+    setMotorOff();
 }
 
 void setMotorToClose() {
-    Serial.println("Close");
   digitalWrite(PIN_MOTOR_CLOSE, HIGH);
   digitalWrite(PIN_MOTOR_OPEN, HIGH);
-  delay(500);
+  delay(50);
   digitalWrite(PIN_MOTOR_CLOSE, LOW);
   digitalWrite(PIN_MOTOR_OPEN, HIGH);
 }
 
-
 void setMotorToOpen() {
-    Serial.println("Open");
   digitalWrite(PIN_MOTOR_CLOSE, HIGH);
   digitalWrite(PIN_MOTOR_OPEN, HIGH);
-  delay(500);
+  delay(50);
   digitalWrite(PIN_MOTOR_CLOSE, HIGH);
   digitalWrite(PIN_MOTOR_OPEN, LOW);
 }
+
 void setMotorOff() {
   digitalWrite(PIN_MOTOR_CLOSE, HIGH);
   digitalWrite(PIN_MOTOR_OPEN, HIGH);

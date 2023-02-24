@@ -5,7 +5,7 @@ LiquidCrystal lcd(8, 9, 4, 5, 6, 7);  // 10 is the backlight
 const int pingPin = 3;  // Trigger Pin of Ultrasonic Sensor
 const int echoPin = 2;  // Echo Pin of Ultrasonic Sensor
 long duration, inches;
-#define DIST_THRESHOLD 5  // inches away threshold (less than this is a Leprechaun)
+#define DIST_THRESHOLD 6  // inches away threshold (less than this is a Leprechaun)
 
 // define some values used by the panel and buttons
 int lcd_key = 0;
@@ -25,7 +25,7 @@ int adc_key_in = 0;
 #define PIN_DOOR_SENSOR 11
 
 // Distance trackers
-#define DISTANCE_MAX 80           // This is the limit when the door hits the box.
+#define DISTANCE_MAX 55           // This is the limit when the door hits the box.
 int16_t distance = DISTANCE_MAX;  // Default assumption that the door is in the worst spot.
 
 // What is the motor doing? (we need to know transitions to avoid shoot through current)
@@ -95,18 +95,23 @@ void loop() {
     if (autoState == AUTO_DISABLED) {
       newMotorState = MOTOR_OFF;  // Do nothing right now.  Probably the door is shut.
     } else if (autoState == AUTO_ENABLED_ARMED) {
-      if (inches < DIST_THRESHOLD) { // Look for Leprechauns!
+      newMotorState = MOTOR_OFF;
+      if (inches < DIST_THRESHOLD) {  // Look for Leprechauns!
         autoState = AUTO_CLOSING;
         newMotorState = MOTOR_CLOSING;
       }
     } else if (autoState == AUTO_CLOSING) {
-      if (distance >= DISTANCE_MAX) { // Go until the set distance.
-        autoState = AUTO_DISABLED; // Caught him!
+      newMotorState = MOTOR_CLOSING;
+      if (distance >= DISTANCE_MAX) {  // Go until the set distance.
+        autoState = AUTO_DISABLED;     // Caught him!
         newMotorState = MOTOR_OFF;
         // TODO: Play a song or something.
+        lcd.setCursor(0, 1);
+        lcd.print("Caught!");
       }
     } else if (autoState == AUTO_OPENING) {
-      if (digitalRead(PIN_DOOR_SENSOR) == LOW) { // Go until the switch is hit.
+      newMotorState = MOTOR_OPENING;
+      if (digitalRead(PIN_DOOR_SENSOR) == LOW) {  // Go until the switch is hit.
         smallMoveForward();
         distance = 0;
         newMotorState = MOTOR_OFF;
@@ -128,9 +133,13 @@ void loop() {
   } else {
     // They are the same.  The door is maybe moving.
     if (newMotorState == MOTOR_CLOSING) {
-        distance += 1;
+      distance += 1;
+      lcd.setCursor(0, 1);
+      lcd.print("D=");
+      lcd.print(distance);
+      lcd.print("   ");
     } else if (newMotorState == MOTOR_OPENING) {
-        distance -= 1;
+      distance -= 1;
     }
   }
 }
@@ -140,38 +149,40 @@ void checkForButtonOverrides() {
   lcd_key = read_LCD_buttons();
   switch (lcd_key) {
     case btnRIGHT:
-      lcd.print("OPEN ");
+      lcd.print("OPEN   ");
       override = BTN_OVERRIDE_OPEN;
       autoState = AUTO_DISABLED;
       lcd.setCursor(0, 0);
       lcd.print("Bowen's Trap Off");
       break;
     case btnLEFT:
-      lcd.print("CLOSE");
+      lcd.print("CLOSE  ");
       override = BTN_OVERRIDE_CLOSE;
       autoState = AUTO_DISABLED;
       lcd.setCursor(0, 0);
       lcd.print("Bowen's Trap Off");
       break;
     case btnUP:
-      lcd.print("STOP ");
+      lcd.print("STOP   ");
       override = BTN_OVERRIDE_STOP;
       autoState = AUTO_DISABLED;
       lcd.setCursor(0, 0);
       lcd.print("Bowen's Trap Off");
       break;
     case btnDOWN:
-      lcd.print("ARMED");
+      lcd.print("ARMED  ");
       override = BTN_OVERRIDE_NONE;
       autoState = AUTO_OPENING;
       lcd.setCursor(0, 0);
       lcd.print("Bowen's Trap On ");
       break;
     case btnSELECT:
-      lcd.print("Unused");
+      lcd.print("TRIGGER");
+      autoState = AUTO_CLOSING;
+      newMotorState = MOTOR_CLOSING;
       break;
     case btnNONE:
-      lcd.print("      ");
+      //lcd.print("        ");
       override = BTN_OVERRIDE_NONE;
       break;
   }
@@ -193,9 +204,9 @@ void getUltrasonicDistance() {
 }
 
 void smallMoveForward() {
-    setMotorToClose();
-    delay(400);
-    setMotorOff();
+  setMotorToClose();
+  delay(400);
+  setMotorOff();
 }
 
 void setMotorToClose() {
